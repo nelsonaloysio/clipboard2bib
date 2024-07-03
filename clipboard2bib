@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+
+# Transforms clipboard containing DOI into BibTex citation.
+#
+# Requires doi2bib to be locally available:
+# https://github.com/mseri/doi2bib
+
+strip='.'
+remove=',;!?@#$%&*()[]{} '
+replace='s:.*doi.org/::;s:.*arxiv.org/abs/:arxiv\::;s:arXiv:arxiv:;s:.*?id=::;s:.*doi/::;s:.*abstract/::;s:.*pdf/::'
+months='s:{jan}:{1}:;s:{feb}:{2}:;s:{mar}:{3}:;s:{apr}:{4}:;s:{may}:{5}:;s:{jun}:{6}:;s:{jul}:{7}:;s:{aug}:{8}:;s:{sep}:{9}:;s:{oct}:{10}:;s:{nov}:{11}:;s:{dec}:{12}:'
+Months='s:{Jan}:{1}:;s:{Feb}:{2}:;s:{Mar}:{3}:;s:{Apr}:{4}:;s:{May}:{5}:;s:{Jun}:{6}:;s:{Jul}:{7}:;s:{Aug}:{8}:;s:{Sep}:{9}:;s:{Oct}:{10}:;s:{Nov}:{11}:;s:{Dec}:{12}:'
+
+clipboard2doi() {
+    # Cleans up the input string with the DOI.
+    doi="$1"
+    doi="${doi#strip}"
+    doi="${doi#strip}"
+    echo "$doi" | tr -d "$remove" | sed "$replace"
+}
+
+doi2bib1() {
+    $([ -n "$(command -v doi2bib)" ] && echo doi2bib || echo "$(dirname "$(realpath "$0")")/doi2bib") "$1"
+}
+
+doi2bib2() {
+    # Fetches bibref from doi2bib.org.
+    curl "https://www.doi2bib.org/8350e5a3e24c153df2275c9f80692773/doi2bib?id=$1" \
+        -H 'authority: www.doi2bib.org' \
+        -H 'accept: */*' \
+        -H 'accept-language: en-US,en;q=0.9,pt;q=0.8,it;q=0.7' \
+        -H 'referer: https://www.doi2bib.org/' \
+        -H 'sec-ch-ua-mobile: ?0' \
+        -H 'sec-ch-ua-platform: "GNU Shell"' \
+        -H 'sec-fetch-dest: empty' \
+        -H 'sec-fetch-mode: cors' \
+        -H 'sec-fetch-site: same-origin' \
+        --silent \
+        --compressed
+}
+
+sendnotification() {
+    # Sends notification on Linux or MacOS.
+    title="clipboard2bib"
+
+    [ "$1" = 0 ] && caption="Successfully copied BibTeX citation."
+    [ "$1" = 1 ] && caption="Failed to copy BibTeX citation."
+
+    case "$(uname -s)" in
+        Linux)
+            notify-send "$title" "$caption"
+            ;;
+        Darwin)
+            notification="display notification \"$caption\" with title \"$title\""
+            osascript -e "${notification}"
+            ;;
+    esac
+}
+
+fromclipboard() {
+    case "$(uname -s)" in
+        Linux)
+            [ -n "$WAYLAND_DISPLAY" -a "$(command -v wl-paste)" ] &&
+            wl-paste ||
+            xclip -selection clipboard -o
+            ;;
+        Darwin)
+            pbpaste
+            ;;
+    esac
+}
+
+toclipboard() {
+    case "$(uname -s)" in
+        Linux)
+            [ -n "$WAYLAND_DISPLAY" -a "$(command -v wl-copy)" ] &&
+            wl-copy ||
+            xclip -selection clipboard
+            ;;
+        Darwin)
+            pbcopy
+            ;;
+    esac
+}
+
+# Obtain DOI from clipboard.
+doi="$(clipboard2doi "$(fromclipboard)")"
+
+# Query using doi2bib binary or doi2bib.org.
+bib="$(doi2bib1 "$doi" || doi2bib2 "$doi")"
+
+# Copy successful result to clipboard and notify user.
+if ( [ -n "$bib" -a "$bib" != "Invalid DOI" -a "$bib" != "Not Found" -a "$bib" != "Too many requests, please try again later." ]); then
+    sed "$months;$Months;s:‚Äì:--:" <<< "$bib" | awk '{$1=$1};1' | toclipboard &&
+    sendnotification 0
+else
+    sendnotification 1
+fi
